@@ -23,7 +23,7 @@
     .proto-desc.active-highlight { background-color: #fde68a; border-color: #d97706; box-shadow: 0 2px 8px rgba(245,158,11,0.25); }
 
     /* SVG 连线层 */
-    #connections { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 50; }
+    #connections { position: fixed; inset: 0; width: 100vw; height: 100vh; pointer-events: none; z-index: 50; }
     .connection-line { fill: none; stroke: #165DFF; stroke-width: 2; opacity: 0.6; transition: all 0.2s ease; }
     .connection-line.active { stroke-width: 3; opacity: 1; }
     .connection-label { fill: #fff; font-size: 12px; font-weight: bold; text-anchor: middle; dominant-baseline: central; }
@@ -312,7 +312,7 @@
   </div>
 
   <!-- SVG 连线层 -->
-  <svg id="connections" class="absolute top-0 left-0 w-full h-full pointer-events-none"></svg>
+  <svg id="connections" class="fixed inset-0 w-screen h-screen pointer-events-none"></svg>
 
   <!-- ========== 模态框：查看详情 ========== -->
   <div id="viewDetailModal" class="modal-overlay modal-hidden fixed inset-0 z-[60] flex items-center justify-center bg-black/40">
@@ -605,18 +605,43 @@
     // ========== 连线绘制 ==========
     const svg = document.getElementById('connections');
     const connections = [];
+    let connectionFrame = null;
+
+    function getVisibleContainerRect(el) {
+      const panel = el.closest('#left-panel, #right-panel');
+      if (panel) return panel.getBoundingClientRect();
+      return { top: 0, left: 0, right: window.innerWidth, bottom: window.innerHeight };
+    }
+
+    function isVisibleInsideContainer(el) {
+      if (!el || el.offsetParent === null) return false;
+      const rect = el.getBoundingClientRect();
+      const containerRect = getVisibleContainerRect(el);
+      return rect.bottom > containerRect.top &&
+             rect.top < containerRect.bottom &&
+             rect.right > containerRect.left &&
+             rect.left < containerRect.right;
+    }
+
+    function scheduleDrawConnections() {
+      if (connectionFrame) return;
+      connectionFrame = requestAnimationFrame(() => {
+        connectionFrame = null;
+        drawConnections();
+      });
+    }
 
     function drawConnections() {
       svg.innerHTML = '';
       connections.length = 0;
 
       const leftElements = document.querySelectorAll('.proto-element[data-proto-id]');
-      const rightElements = document.querySelectorAll('.proto-desc[data-proto-id]');
 
       leftElements.forEach(leftEl => {
         const protoId = leftEl.getAttribute('data-proto-id');
         const rightEl = document.querySelector(`.proto-desc[data-proto-id="${protoId}"]`);
         if (!rightEl) return;
+        if (!isVisibleInsideContainer(leftEl) || !isVisibleInsideContainer(rightEl)) return;
 
         const leftRect = leftEl.getBoundingClientRect();
         const rightRect = rightEl.getBoundingClientRect();
@@ -632,12 +657,16 @@
         const cp2x = x1 + (x2 - x1) * 0.5;
         const cp2y = y2;
 
+        const group = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+        group.setAttribute('data-proto-id', protoId);
+        svg.appendChild(group);
+
         // 路径
         const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
         path.setAttribute('d', `M ${x1} ${y1} C ${cp1x} ${cp1y}, ${cp2x} ${cp2y}, ${x2} ${y2}`);
         path.setAttribute('class', 'connection-line');
         path.setAttribute('data-proto-id', protoId);
-        svg.appendChild(path);
+        group.appendChild(path);
 
         // 编号标签
         const midX = (x1 + x2) / 2;
@@ -647,7 +676,7 @@
         bg.setAttribute('cy', midY);
         bg.setAttribute('r', 11);
         bg.setAttribute('class', 'connection-label-bg');
-        svg.appendChild(bg);
+        group.appendChild(bg);
 
         const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
         text.setAttribute('x', midX);
@@ -655,9 +684,9 @@
         text.setAttribute('dy', '0.05em');
         text.setAttribute('class', 'connection-label');
         text.textContent = protoId;
-        svg.appendChild(text);
+        group.appendChild(text);
 
-        connections.push({ protoId, path, leftEl, rightEl });
+        connections.push({ protoId, group, path, leftEl, rightEl });
       });
     }
 
@@ -687,8 +716,14 @@
     }
 
     // ========== 模态框 ==========
-    function openModal(id) { document.getElementById(id).classList.remove('modal-hidden'); }
-    function closeModal(id) { document.getElementById(id).classList.add('modal-hidden'); }
+    function openModal(id) {
+      document.getElementById(id).classList.remove('modal-hidden');
+      scheduleDrawConnections();
+    }
+    function closeModal(id) {
+      document.getElementById(id).classList.add('modal-hidden');
+      scheduleDrawConnections();
+    }
     document.querySelectorAll('.modal-overlay').forEach(overlay => {
       overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.classList.add('modal-hidden'); });
     });
@@ -711,15 +746,19 @@
       } else {
         leftPanel.style.display = ''; rightPanel.style.height = ''; btn.innerHTML = '<i class="fas fa-info"></i>';
       }
+      scheduleDrawConnections();
     }
 
     // ========== 初始化 ==========
-    function init() { drawConnections(); bindHoverEvents(); }
+    function init() {
+      bindHoverEvents();
+      scheduleDrawConnections();
+    }
     document.addEventListener('DOMContentLoaded', () => { setTimeout(init, 100); });
-    let resizeTimer;
-    window.addEventListener('resize', () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(init, 150); });
-    document.getElementById('left-panel').addEventListener('scroll', () => { requestAnimationFrame(drawConnections); });
-    document.getElementById('right-panel').addEventListener('scroll', () => { requestAnimationFrame(drawConnections); });
+    window.addEventListener('resize', scheduleDrawConnections);
+    window.addEventListener('scroll', scheduleDrawConnections, { passive: true });
+    document.getElementById('left-panel').addEventListener('scroll', scheduleDrawConnections, { passive: true });
+    document.getElementById('right-panel').addEventListener('scroll', scheduleDrawConnections, { passive: true });
   </script>
 </body>
 </html>
